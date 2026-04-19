@@ -1,9 +1,8 @@
 import { useState } from 'react'
 import AuthPage from './components/AuthPage'
 import Dashboard from './components/Dashboard'
-import CreateProject from './components/CreateProject'
-import ProviderList from './components/ProviderList'
-import ProjectView from './components/ProjectView'
+import CreateListing from './components/CreateListing'
+import NegotiationView from './components/NegotiationView'
 import { setUser } from './api'
 
 export default function App() {
@@ -22,63 +21,39 @@ export default function App() {
     setView({ name: 'dashboard' })
   }
 
-  function navigate(v) { setView(v) }
-
   if (!user) return <AuthPage onAuth={handleAuth} />
 
   return (
     <div>
-      {/* Top nav */}
       <div style={nav.bar}>
-        <span style={nav.logo} onClick={() => navigate({ name: 'dashboard' })}>Banna</span>
+        <span style={nav.logo} onClick={() => setView({ name: 'dashboard' })}>Banna</span>
         <div style={nav.right}>
           <span style={nav.userName}>{user.name}</span>
-          {user.is_verified && <span style={nav.verified}>Verified</span>}
+          <span style={nav.rolePill}>{user.role}</span>
           <button style={nav.logoutBtn} onClick={handleLogout}>Log out</button>
         </div>
       </div>
 
-      {/* Views */}
       {view.name === 'dashboard' && (
         <Dashboard
           user={user}
-          onCreateProject={() => navigate({ name: 'create_project' })}
-          onOpenProject={project => navigate({ name: 'project', project })}
-          onOpenRequest={request => navigate({ name: 'request', request })}
+          onOpenNegotiation={request => setView({ name: 'negotiation', request })}
+          onCreateListing={() => setView({ name: 'create_listing' })}
         />
       )}
 
-      {view.name === 'create_project' && (
-        <CreateProject
-          onBack={() => navigate({ name: 'dashboard' })}
-          onCreated={project => navigate({ name: 'project', project })}
+      {view.name === 'create_listing' && (
+        <CreateListing
+          onBack={() => setView({ name: 'dashboard' })}
+          onCreated={() => setView({ name: 'dashboard' })}
         />
       )}
 
-      {view.name === 'project' && (
-        <ProjectView
-          project={view.project}
+      {view.name === 'negotiation' && (
+        <NegotiationView
+          request={view.request}
           user={user}
-          onBack={() => navigate({ name: 'dashboard' })}
-          onFindProvider={project => navigate({ name: 'providers', project })}
-        />
-      )}
-
-      {view.name === 'providers' && (
-        <ProviderList
-          project={view.project}
-          onBack={() => navigate({ name: 'project', project: view.project })}
-          onRequestSent={() => navigate({ name: 'project', project: view.project })}
-        />
-      )}
-
-      {view.name === 'request' && (
-        // Provider opens a request directly from their dashboard
-        <ProjectView
-          project={view.request.projects}
-          user={user}
-          onBack={() => navigate({ name: 'dashboard' })}
-          onFindProvider={() => {}}
+          onBack={() => setView({ name: 'dashboard' })}
         />
       )}
     </div>
@@ -94,6 +69,6 @@ const nav = {
   logo: { fontSize: 20, fontWeight: 800, color: '#1a1a1a', cursor: 'pointer' },
   right: { display: 'flex', alignItems: 'center', gap: 12 },
   userName: { fontSize: 14, color: '#444' },
-  verified: { fontSize: 11, fontWeight: 700, background: '#e8f5e9', color: '#2e7d32', padding: '2px 8px', borderRadius: 10 },
+  rolePill: { fontSize: 11, fontWeight: 700, background: '#e8f0fe', color: '#1a73e8', padding: '2px 8px', borderRadius: 10, textTransform: 'capitalize' },
   logoutBtn: { padding: '6px 14px', border: '1px solid #ddd', borderRadius: 8, background: '#fff', fontSize: 13, color: '#555', cursor: 'pointer' }
 }
