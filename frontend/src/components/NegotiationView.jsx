@@ -28,8 +28,8 @@ export default function NegotiationView({ request: initialRequest, user, onBack 
 
   useEffect(() => { load() }, [initialRequest.id])
 
-  const activeOffer = data?.offers?.filter(o => o.status === 'pending').slice(-1)[0]
-  const agreedOffer = data?.offers?.find(o => ['seller_accepted', 'buyer_accepted', 'accepted'].includes(o.status))
+  const activeOffer = data?.offers?.filter(o => o.outcome === 'pending').slice(-1)[0]
+  const agreedOffer = data?.offers?.find(o => o.outcome === 'accepted')
   const request = data?.request
 
   async function sendOffer(amount, extra = {}) {
@@ -66,15 +66,6 @@ export default function NegotiationView({ request: initialRequest, user, onBack 
     finally { setActionLoading(false) }
   }
 
-  async function confirmPayment() {
-    setActionLoading(true); setError(null)
-    try {
-      await api(`/api/negotiations/offer/${agreedOffer.id}/confirm`, { method: 'PATCH', body: {} })
-      await load()
-    } catch (err) { setError(err.message) }
-    finally { setActionLoading(false) }
-  }
-
   async function rejectOffer() {
     setActionLoading(true); setError(null)
     try {
@@ -86,9 +77,9 @@ export default function NegotiationView({ request: initialRequest, user, onBack 
 
   if (loading) return <div style={s.page}><p style={s.empty}>Loading...</p></div>
 
-  const listing = request?.listings
-  const buyer = request?.buyers
-  const seller = request?.sellers
+  const listing = request?.listing
+  const buyer = request?.buyer?.appuser
+  const seller = request?.seller?.appuser
 
   return (
     <div style={s.page}>
@@ -120,22 +111,22 @@ export default function NegotiationView({ request: initialRequest, user, onBack 
 
         <div style={s.offerList}>
           {data?.offers?.map(o => (
-            <div key={o.id} style={{ ...s.offerRow, opacity: o.status === 'pending' ? 1 : 0.5 }}>
+            <div key={o.id} style={{ ...s.offerRow, opacity: o.outcome === 'pending' ? 1 : 0.5 }}>
               <div style={s.offerLeft}>
                 <span style={s.offerWho}>{o.offered_by_role === 'seller' ? seller?.name : buyer?.name}</span>
                 <span style={s.offerAmount}>{Number(o.amount).toLocaleString()} SAR</span>
                 {o.is_final && <span style={s.finalTag}>Final</span>}
               </div>
-              <span style={{ ...s.statusPill, background: statusBg(o.status) }}>{o.status}</span>
+              <span style={{ ...s.statusPill, background: statusBg(o.outcome) }}>{o.outcome}</span>
             </div>
           ))}
         </div>
 
-        {/* Either party accepted — buyer picks payment method */}
-        {['seller_accepted', 'buyer_accepted'].includes(agreedOffer?.status) && isBuyer && (
+        {/* Offer accepted — buyer picks payment method */}
+        {agreedOffer?.outcome === 'accepted' && agreedOffer?.payment_mode === 'pending_buyer_choice' && isBuyer && (
           <div style={s.acceptedBox}>
             <p style={s.acceptedText}>
-              Seller accepted <strong>{Number(agreedOffer.amount).toLocaleString()} SAR</strong>. Choose how you'd like to pay:
+              Offer accepted at <strong>{Number(agreedOffer.amount).toLocaleString()} SAR</strong>. Choose how you'd like to pay:
             </p>
             <div style={{ ...s.paymentModeOptions, marginBottom: 14 }}>
               {['one_time', 'installment'].map(m => (
@@ -151,8 +142,8 @@ export default function NegotiationView({ request: initialRequest, user, onBack 
           </div>
         )}
 
-        {/* Buyer accepted seller's offer — waiting for buyer to pay */}
-        {agreedOffer?.status === 'buyer_accepted' && !isBuyer && (
+        {/* Offer accepted — waiting for buyer to pay */}
+        {agreedOffer?.outcome === 'accepted' && agreedOffer?.payment_mode === 'pending_buyer_choice' && !isBuyer && (
           <div style={s.acceptedBox}>
             <p style={s.acceptedText}>
               You accepted <strong>{Number(agreedOffer.amount).toLocaleString()} SAR</strong>. Waiting for the buyer to complete payment.
@@ -160,21 +151,18 @@ export default function NegotiationView({ request: initialRequest, user, onBack 
           </div>
         )}
 
-        {/* Fully accepted — payment link ready */}
-        {agreedOffer?.status === 'accepted' && (
+        {/* Payment link ready */}
+        {agreedOffer?.outcome === 'accepted' && agreedOffer?.payment_mode !== 'pending_buyer_choice' && (
           <div style={s.acceptedBox}>
             <p style={s.acceptedText}>
               Deal at <strong>{Number(agreedOffer.amount).toLocaleString()} SAR</strong>
               {' '}· {agreedOffer.payment_mode === 'installment' ? 'Installments' : 'One-time'}
             </p>
             {agreedOffer.stream_payment_url && (
-              <a href={agreedOffer.stream_payment_url} target="_blank" rel="noreferrer" style={{ ...s.payBtn, textDecoration: 'none', marginRight: 10 }}>
+              <a href={agreedOffer.stream_payment_url} target="_blank" rel="noreferrer" style={{ ...s.payBtn, textDecoration: 'none' }}>
                 Pay via Stream →
               </a>
             )}
-            <button style={{ ...s.payBtn, background: '#1a73e8', marginTop: 10 }} onClick={confirmPayment} disabled={actionLoading}>
-              {actionLoading ? 'Confirming...' : 'Confirm Payment'}
-            </button>
           </div>
         )}
 
@@ -259,7 +247,7 @@ export default function NegotiationView({ request: initialRequest, user, onBack 
 }
 
 function statusBg(status) {
-  return { pending: '#fff3e0', active: '#e3f2fd', paid: '#e8f5e9', accepted: '#e8f5e9', completed: '#e8f5e9', seller_accepted: '#e8f5e9', buyer_accepted: '#e8f5e9', rejected: '#fce8e6', countered: '#f3e5f5', cancelled: '#f5f5f5' }[status] || '#f5f5f5'
+  return { pending: '#fff3e0', active: '#e3f2fd', paid: '#e8f5e9', accepted: '#e8f5e9', rejected: '#fce8e6', countered: '#f3e5f5', cancelled: '#f5f5f5' }[status] || '#f5f5f5'
 }
 
 const s = {

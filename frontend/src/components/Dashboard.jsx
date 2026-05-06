@@ -89,7 +89,7 @@ export default function Dashboard({ user, onOpenNegotiation, onCreateListing }) 
                         </div>
                         {l.description && <p style={s.cardDesc}>{l.description}</p>}
                         <p style={s.cardPrice}>{Number(l.price).toLocaleString()} SAR</p>
-                        <p style={s.cardMeta}>Seller: {l.sellers?.name}</p>
+                        <p style={s.cardMeta}>Seller: {l.seller?.appuser?.name}</p>
                         {l.status === 'active' && (
                           requested
                             ? <button style={s.btnDisabled} disabled>Request Sent</button>
@@ -137,13 +137,13 @@ export default function Dashboard({ user, onOpenNegotiation, onCreateListing }) 
                   {myRequests.map(r => (
                     <div key={r.id} style={s.card} onClick={() => onOpenNegotiation(r)} role="button">
                       <div style={s.cardHeader}>
-                        <h3 style={s.cardTitle}>{r.listings?.title || 'Listing'}</h3>
+                        <h3 style={s.cardTitle}>{r.listing?.title || 'Listing'}</h3>
                         <span style={{ ...s.pill, background: '#fff3e0', color: statusColor[r.status] || '#999' }}>
                           {r.status}
                         </span>
                       </div>
-                      <p style={s.cardPrice}>{Number(r.listings?.price || 0).toLocaleString()} SAR (listed)</p>
-                      <p style={s.cardMeta}>{isBuyer ? `Seller: ${r.sellers?.name}` : `Buyer: ${r.buyers?.name}`}</p>
+                      <p style={s.cardPrice}>{Number(r.listing?.price || 0).toLocaleString()} SAR (listed)</p>
+                      <p style={s.cardMeta}>{isBuyer ? `Seller: ${r.seller?.appuser?.name}` : `Buyer: ${r.buyer?.appuser?.name}`}</p>
                       <p style={s.cardDate}>{new Date(r.created_at).toLocaleDateString()}</p>
                     </div>
                   ))}

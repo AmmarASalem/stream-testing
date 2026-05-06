@@ -18,7 +18,7 @@ router.post('/requests', userAuth, async (req, res) => {
   if (!listing_id) return res.status(400).json({ message: 'listing_id is required.' })
 
   const { data: listing } = await supabase
-    .from('listings')
+    .from('listing')
     .select('id, seller_id, status')
     .eq('id', listing_id)
     .single()
@@ -26,9 +26,8 @@ router.post('/requests', userAuth, async (req, res) => {
   if (!listing) return res.status(404).json({ message: 'Listing not found.' })
   if (listing.status !== 'active') return res.status(400).json({ message: 'This listing is no longer available.' })
 
-  // One active request per buyer per listing
   const { data: existing } = await supabase
-    .from('requests')
+    .from('request')
     .select('id')
     .eq('listing_id', listing_id)
     .eq('buyer_id', req.userId)
@@ -38,7 +37,7 @@ router.post('/requests', userAuth, async (req, res) => {
   if (existing) return res.status(409).json({ message: 'You already have an active request for this listing.' })
 
   const { data: request, error } = await supabase
-    .from('requests')
+    .from('request')
     .insert({ listing_id, buyer_id: req.userId, seller_id: listing.seller_id })
     .select()
     .single()
@@ -49,15 +48,15 @@ router.post('/requests', userAuth, async (req, res) => {
     const expires_at = expiry_hours
       ? new Date(Date.now() + Number(expiry_hours) * 3600 * 1000).toISOString()
       : null
-    await supabase.from('negotiations').insert({
+    await supabase.from('negotiation').insert({
       request_id: request.id,
       offered_by: req.userId,
       offered_by_role: 'buyer',
       amount: Number(amount),
       expires_at,
-      status: 'pending'
+      outcome: 'pending'
     })
-    await supabase.from('requests').update({ status: 'active' }).eq('id', request.id)
+    await supabase.from('request').update({ status: 'active' }).eq('id', request.id)
   }
 
   res.status(201).json(request)
@@ -66,8 +65,8 @@ router.post('/requests', userAuth, async (req, res) => {
 // GET /api/negotiations/requests — list requests for current user
 router.get('/requests', userAuth, async (req, res) => {
   let query = supabase
-    .from('requests')
-    .select('*, listings(id, title, price, description), buyers(id, name, email), sellers(id, name, email)')
+    .from('request')
+    .select('*, listing(id, title, price, description), buyer(appuser(id, name, email)), seller(appuser(id, name, email))')
     .order('created_at', { ascending: false })
 
   if (req.userRole === 'buyer') {
@@ -84,15 +83,15 @@ router.get('/requests', userAuth, async (req, res) => {
 // GET /api/negotiations/requests/:requestId — request detail + offer history
 router.get('/requests/:requestId', userAuth, async (req, res) => {
   const { data: request, error } = await supabase
-    .from('requests')
-    .select('*, listings(*), buyers(id, name, email, phone), sellers(id, name, email, phone)')
+    .from('request')
+    .select('*, listing(*), buyer(appuser(id, name, email, phone_number)), seller(appuser(id, name, email, phone_number))')
     .eq('id', req.params.requestId)
     .single()
 
   if (error || !request) return res.status(404).json({ message: 'Request not found.' })
 
   const { data: offers } = await supabase
-    .from('negotiations')
+    .from('negotiation')
     .select('*')
     .eq('request_id', req.params.requestId)
     .order('created_at', { ascending: true })
@@ -107,19 +106,18 @@ router.post('/offer', userAuth, async (req, res) => {
   const { request_id, amount, expiry_hours, is_final } = req.body
   if (!request_id || !amount) return res.status(400).json({ message: 'request_id and amount are required.' })
 
-  // Mark any existing pending offer as countered
   await supabase
-    .from('negotiations')
-    .update({ status: 'countered' })
+    .from('negotiation')
+    .update({ outcome: 'countered' })
     .eq('request_id', request_id)
-    .eq('status', 'pending')
+    .eq('outcome', 'pending')
 
   const expires_at = expiry_hours
     ? new Date(Date.now() + Number(expiry_hours) * 3600 * 1000).toISOString()
     : null
 
   const { data: offer, error } = await supabase
-    .from('negotiations')
+    .from('negotiation')
     .insert({
       request_id,
       offered_by: req.userId,
@@ -127,42 +125,38 @@ router.post('/offer', userAuth, async (req, res) => {
       amount: Number(amount),
       expires_at,
       is_final: !!is_final,
-      status: 'pending'
+      outcome: 'pending'
     })
     .select()
     .single()
 
   if (error) return res.status(500).json({ message: error.message })
 
-  await supabase.from('requests').update({ status: 'active' }).eq('id', request_id)
+  await supabase.from('request').update({ status: 'active' }).eq('id', request_id)
 
   res.status(201).json(offer)
 })
 
 // PATCH /api/negotiations/offer/:id/accept — either party accepts the other's offer
-// Seller accepting marks it 'seller_accepted'; buyer accepting marks it 'buyer_accepted'
-// Neither creates the payment link — that happens at /pay
 router.patch('/offer/:id/accept', userAuth, async (req, res) => {
   const { data: offer } = await supabase
-    .from('negotiations')
-    .select('*, requests(id, listing_id)')
+    .from('negotiation')
+    .select('*, request(id, listing_id)')
     .eq('id', req.params.id)
     .single()
 
   if (!offer) return res.status(404).json({ message: 'Offer not found.' })
-  if (offer.status !== 'pending') return res.status(400).json({ message: 'This offer is no longer active.' })
+  if (offer.outcome !== 'pending') return res.status(400).json({ message: 'This offer is no longer active.' })
   if (offer.offered_by_role === req.userRole) return res.status(400).json({ message: "You can't accept your own offer." })
 
-  const newStatus = req.userRole === 'seller' ? 'seller_accepted' : 'buyer_accepted'
-
   const { data: updated } = await supabase
-    .from('negotiations')
-    .update({ status: newStatus })
+    .from('negotiation')
+    .update({ outcome: 'accepted' })
     .eq('id', req.params.id)
     .select()
     .single()
 
-  await supabase.from('requests').update({ status: 'active' }).eq('id', offer.requests.id)
+  await supabase.from('request').update({ status: 'active' }).eq('id', offer.request.id)
 
   res.json(updated)
 })
@@ -175,26 +169,25 @@ router.patch('/offer/:id/pay', userAuth, async (req, res) => {
   if (!payment_mode) return res.status(400).json({ message: 'payment_mode is required (one_time or installment).' })
 
   const { data: offer } = await supabase
-    .from('negotiations')
-    .select('*, requests(id, listing_id)')
+    .from('negotiation')
+    .select('*, request(id, listing_id)')
     .eq('id', req.params.id)
     .single()
 
   if (!offer) return res.status(404).json({ message: 'Offer not found.' })
-  if (!['seller_accepted', 'buyer_accepted'].includes(offer.status)) {
-    return res.status(400).json({ message: 'Offer has not been accepted yet.' })
+  if (offer.outcome !== 'accepted' || offer.payment_mode !== 'pending_buyer_choice') {
+    return res.status(400).json({ message: 'Offer has not been accepted yet or payment already initiated.' })
   }
 
   const { data: listing } = await supabase
-    .from('listings')
+    .from('listing')
     .select('title')
-    .eq('id', offer.requests.listing_id)
+    .eq('id', offer.request.listing_id)
     .single()
 
   const itemName = listing?.title || 'Item'
   const installment = payment_mode === 'installment'
 
-  // 1. Create a Stream product for the agreed amount
   let productRes
   try {
     productRes = await axios.post(
@@ -216,7 +209,6 @@ router.patch('/offer/:id/pay', userAuth, async (req, res) => {
 
   const productId = productRes.data.id
 
-  // 2. Create the payment link
   let streamUrl = null
   try {
     const linkRes = await axios.post(
@@ -242,16 +234,15 @@ router.patch('/offer/:id/pay', userAuth, async (req, res) => {
     return res.status(502).json({ message: 'Failed to create Stream payment link.', detail })
   }
 
-
   const { data: updated } = await supabase
-    .from('negotiations')
-    .update({ status: 'accepted', payment_mode, stream_payment_url: streamUrl })
+    .from('negotiation')
+    .update({ payment_mode, stream_payment_url: streamUrl })
     .eq('id', req.params.id)
     .select()
     .single()
 
-  await supabase.from('requests').update({ status: 'paid' }).eq('id', offer.requests.id)
-  await supabase.from('listings').update({ status: 'sold' }).eq('id', offer.requests.listing_id)
+  await supabase.from('request').update({ status: 'paid' }).eq('id', offer.request.id)
+  await supabase.from('listing').update({ status: 'sold' }).eq('id', offer.request.listing_id)
 
   res.json({ offer: updated, payment_url: streamUrl })
 })
@@ -259,36 +250,11 @@ router.patch('/offer/:id/pay', userAuth, async (req, res) => {
 // PATCH /api/negotiations/offer/:id/reject
 router.patch('/offer/:id/reject', userAuth, async (req, res) => {
   const { data: updated } = await supabase
-    .from('negotiations')
-    .update({ status: 'rejected' })
+    .from('negotiation')
+    .update({ outcome: 'rejected' })
     .eq('id', req.params.id)
     .select()
     .single()
-
-  res.json(updated)
-})
-
-// PATCH /api/negotiations/offer/:id/confirm — buyer confirms payment completed
-router.patch('/offer/:id/confirm', userAuth, async (req, res) => {
-  if (req.userRole !== 'buyer') return res.status(403).json({ message: 'Only the buyer can confirm payment.' })
-
-  const { data: offer } = await supabase
-    .from('negotiations')
-    .select('*, requests(id)')
-    .eq('id', req.params.id)
-    .single()
-
-  if (!offer) return res.status(404).json({ message: 'Offer not found.' })
-  if (offer.status !== 'accepted') return res.status(400).json({ message: 'Offer is not in accepted state.' })
-
-  const { data: updated } = await supabase
-    .from('negotiations')
-    .update({ status: 'completed' })
-    .eq('id', req.params.id)
-    .select()
-    .single()
-
-  await supabase.from('requests').update({ status: 'completed' }).eq('id', offer.requests.id)
 
   res.json(updated)
 })

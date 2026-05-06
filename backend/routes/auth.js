@@ -1,5 +1,6 @@
 const express = require('express')
 const bcrypt = require('bcrypt')
+const crypto = require('crypto')
 const { createClient } = require('@supabase/supabase-js')
 
 const router = express.Router()
@@ -13,10 +14,12 @@ router.post('/signup/buyer', async (req, res) => {
     return res.status(400).json({ message: 'name, email, and phone are required.' })
   }
 
-  const { data: buyer, error } = await supabase
-    .from('buyers')
-    .insert({ name, email, phone })
-    .select('id, name, email, phone, created_at')
+  const hashed_password = await bcrypt.hash('', 10)
+
+  const { data: user, error } = await supabase
+    .from('appuser')
+    .insert({ name, email, hashed_password, phone_number: phone, role: 'buyer' })
+    .select('id, name, email, phone_number, role, created_at')
     .single()
 
   if (error) {
@@ -24,21 +27,32 @@ router.post('/signup/buyer', async (req, res) => {
     return res.status(500).json({ message: 'Failed to create account.' })
   }
 
-  res.status(201).json({ user: { ...buyer, role: 'buyer' } })
+  const stream_consumer_id = crypto.randomUUID()
+  const { error: buyerError } = await supabase
+    .from('buyer')
+    .insert({ id: user.id, stream_consumer_id })
+
+  if (buyerError) {
+    await supabase.from('appuser').delete().eq('id', user.id)
+    return res.status(500).json({ message: 'Failed to create buyer profile.' })
+  }
+
+  res.status(201).json({ user })
 })
 
 router.post('/login/buyer', async (req, res) => {
   const { email } = req.body
   if (!email) return res.status(400).json({ message: 'email is required.' })
 
-  const { data: buyer, error } = await supabase
-    .from('buyers')
-    .select('id, name, email, phone, created_at')
+  const { data: user, error } = await supabase
+    .from('appuser')
+    .select('id, name, email, phone_number, role, created_at')
     .eq('email', email)
+    .eq('role', 'buyer')
     .single()
 
-  if (error || !buyer) return res.status(404).json({ message: 'No buyer account found with this email.' })
-  res.json({ user: { ...buyer, role: 'buyer' } })
+  if (error || !user) return res.status(404).json({ message: 'No buyer account found with this email.' })
+  res.json({ user })
 })
 
 // ── SELLER ────────────────────────────────────────────────────────────────────
@@ -49,12 +63,12 @@ router.post('/signup/seller', async (req, res) => {
     return res.status(400).json({ message: 'name, email, and password are required.' })
   }
 
-  const passwordHash = await bcrypt.hash(password, 10)
+  const hashed_password = await bcrypt.hash(password, 10)
 
-  const { data: seller, error } = await supabase
-    .from('sellers')
-    .insert({ name, email, phone, password_hash: passwordHash })
-    .select('id, name, email, phone, created_at')
+  const { data: user, error } = await supabase
+    .from('appuser')
+    .insert({ name, email, hashed_password, phone_number: phone || '', role: 'seller' })
+    .select('id, name, email, phone_number, role, created_at')
     .single()
 
   if (error) {
@@ -62,26 +76,36 @@ router.post('/signup/seller', async (req, res) => {
     return res.status(500).json({ message: 'Failed to create account.' })
   }
 
-  res.status(201).json({ user: { ...seller, role: 'seller' } })
+  const { error: sellerError } = await supabase
+    .from('seller')
+    .insert({ id: user.id })
+
+  if (sellerError) {
+    await supabase.from('appuser').delete().eq('id', user.id)
+    return res.status(500).json({ message: 'Failed to create seller profile.' })
+  }
+
+  res.status(201).json({ user })
 })
 
 router.post('/login/seller', async (req, res) => {
   const { email, password } = req.body
   if (!email || !password) return res.status(400).json({ message: 'email and password are required.' })
 
-  const { data: seller, error } = await supabase
-    .from('sellers')
-    .select('id, name, email, phone, password_hash, created_at')
+  const { data: user, error } = await supabase
+    .from('appuser')
+    .select('id, name, email, phone_number, role, hashed_password, created_at')
     .eq('email', email)
+    .eq('role', 'seller')
     .single()
 
-  if (error || !seller) return res.status(404).json({ message: 'No seller account found with this email.' })
+  if (error || !user) return res.status(404).json({ message: 'No seller account found with this email.' })
 
-  const match = await bcrypt.compare(password, seller.password_hash)
+  const match = await bcrypt.compare(password, user.hashed_password)
   if (!match) return res.status(401).json({ message: 'Incorrect password.' })
 
-  const { password_hash, ...safeData } = seller
-  res.json({ user: { ...safeData, role: 'seller' } })
+  const { hashed_password, ...safeData } = user
+  res.json({ user: safeData })
 })
 
 module.exports = router

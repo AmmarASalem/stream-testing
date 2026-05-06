@@ -7,9 +7,10 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 // GET /api/sellers/:id
 router.get('/:id', async (req, res) => {
   const { data: seller, error } = await supabase
-    .from('sellers')
-    .select('id, name, email, phone, created_at')
+    .from('appuser')
+    .select('id, name, email, phone_number, role, created_at')
     .eq('id', req.params.id)
+    .eq('role', 'seller')
     .single()
 
   if (error || !seller) return res.status(404).json({ message: 'Seller not found.' })
