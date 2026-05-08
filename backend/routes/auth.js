@@ -9,12 +9,12 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 // ── BUYER ─────────────────────────────────────────────────────────────────────
 
 router.post('/signup/buyer', async (req, res) => {
-  const { name, email, phone } = req.body
-  if (!name || !email || !phone) {
-    return res.status(400).json({ message: 'name, email, and phone are required.' })
+  const { name, email, phone, password } = req.body
+  if (!name || !email || !phone || !password) {
+    return res.status(400).json({ message: 'name, email, phone, and password are required.' })
   }
 
-  const hashed_password = await bcrypt.hash('', 10)
+  const hashed_password = await bcrypt.hash(password, 10)
 
   const { data: user, error } = await supabase
     .from('appuser')
@@ -41,18 +41,23 @@ router.post('/signup/buyer', async (req, res) => {
 })
 
 router.post('/login/buyer', async (req, res) => {
-  const { email } = req.body
-  if (!email) return res.status(400).json({ message: 'email is required.' })
+  const { email, password } = req.body
+  if (!email || !password) return res.status(400).json({ message: 'email and password are required.' })
 
   const { data: user, error } = await supabase
     .from('appuser')
-    .select('id, name, email, phone_number, role, created_at')
+    .select('id, name, email, phone_number, role, hashed_password, created_at')
     .eq('email', email)
     .eq('role', 'buyer')
     .single()
 
   if (error || !user) return res.status(404).json({ message: 'No buyer account found with this email.' })
-  res.json({ user })
+
+  const match = await bcrypt.compare(password, user.hashed_password)
+  if (!match) return res.status(401).json({ message: 'Incorrect password.' })
+
+  const { hashed_password, ...safeData } = user
+  res.json({ user: safeData })
 })
 
 // ── SELLER ────────────────────────────────────────────────────────────────────

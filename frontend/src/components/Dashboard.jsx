@@ -21,7 +21,7 @@ export default function Dashboard({ user, onOpenNegotiation, onCreateListing }) 
       .finally(() => setLoading(false))
   }, [isBuyer])
 
-  const statusColor = { pending: '#f57c00', active: '#1a73e8', paid: '#34a853', cancelled: '#999' }
+  const statusColor = { pending: '#f57c00', active: '#1a73e8', awaiting_payment: '#e65100', paid: '#34a853', cancelled: '#999', deal: '#2e7d32' }
 
   async function sendRequest(listingId, amount) {
     try {
@@ -134,19 +134,50 @@ export default function Dashboard({ user, onOpenNegotiation, onCreateListing }) 
             myRequests.length === 0
               ? <p style={s.empty}>No requests yet.</p>
               : <div style={s.grid}>
-                  {myRequests.map(r => (
-                    <div key={r.id} style={s.card} onClick={() => onOpenNegotiation(r)} role="button">
-                      <div style={s.cardHeader}>
-                        <h3 style={s.cardTitle}>{r.listing?.title || 'Listing'}</h3>
-                        <span style={{ ...s.pill, background: '#fff3e0', color: statusColor[r.status] || '#999' }}>
-                          {r.status}
-                        </span>
-                      </div>
-                      <p style={s.cardPrice}>{Number(r.listing?.price || 0).toLocaleString()} SAR (listed)</p>
-                      <p style={s.cardMeta}>{isBuyer ? `Seller: ${r.seller?.appuser?.name}` : `Buyer: ${r.buyer?.appuser?.name}`}</p>
-                      <p style={s.cardDate}>{new Date(r.created_at).toLocaleDateString()}</p>
-                    </div>
-                  ))}
+                  {(() => {
+                    const dealtListingIds = new Set(
+                      myRequests
+                        .filter(r => (r.negotiation || []).some(o => o.outcome === 'accepted'))
+                        .map(r => r.listing_id)
+                    )
+                    return myRequests.map(r => {
+                      const offers = r.negotiation || []
+                      const agreed = offers.find(o => o.outcome === 'accepted')
+                      const latest = [...offers].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0]
+                      const activeOffer = agreed || (latest?.outcome === 'pending' ? latest : null)
+                      const listingDealTaken = !agreed && dealtListingIds.has(r.listing_id)
+                      const displayStatus = agreed ? 'deal' : r.status
+                      return (
+                        <div key={r.id}
+                          style={{ ...s.card, ...(listingDealTaken ? s.cardBlocked : {}) }}
+                          onClick={() => onOpenNegotiation({ ...r, listingDealTaken })}
+                          role="button">
+                          <div style={s.cardHeader}>
+                            <h3 style={s.cardTitle}>{r.listing?.title || 'Listing'}</h3>
+                            <span style={{ ...s.pill, background: displayStatus === 'deal' ? '#e8f5e9' : '#fff3e0', color: statusColor[displayStatus] || '#999' }}>
+                              {displayStatus}
+                            </span>
+                          </div>
+                          {listingDealTaken && (
+                            <p style={s.takenNote}>Listing already has an accepted deal</p>
+                          )}
+                          {activeOffer ? (
+                            <p style={s.cardPrice}>
+                              {Number(activeOffer.amount).toLocaleString()} SAR
+                              <span style={s.offerLabel}>{agreed ? ' agreed' : ' offer'}</span>
+                            </p>
+                          ) : (
+                            <p style={s.cardPrice}>
+                              {Number(r.listing?.price || 0).toLocaleString()} SAR
+                              <span style={s.offerLabel}> listed</span>
+                            </p>
+                          )}
+                          <p style={s.cardMeta}>{isBuyer ? `Seller: ${r.seller?.appuser?.name}` : `Buyer: ${r.buyer?.appuser?.name}`}</p>
+                          <p style={s.cardDate}>{new Date(r.created_at).toLocaleDateString()}</p>
+                        </div>
+                      )
+                    })
+                  })()}
                 </div>
           )}
         </>
@@ -193,11 +224,14 @@ const s = {
   emptyText: { color: '#999', marginBottom: 16, fontSize: 15 },
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 },
   card: { background: '#fff', borderRadius: 12, padding: 20, boxShadow: '0 2px 12px rgba(0,0,0,0.06)', cursor: 'pointer' },
+  cardBlocked: { opacity: 0.6, background: '#fafafa' },
+  takenNote: { margin: '0 0 8px', fontSize: 12, color: '#e65100', fontWeight: 600 },
   cardHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 },
   cardTitle: { margin: 0, fontSize: 16, fontWeight: 700, color: '#1a1a1a' },
   pill: { fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10, flexShrink: 0 },
   cardDesc: { margin: '0 0 8px', fontSize: 13, color: '#666', lineHeight: 1.4 },
   cardPrice: { margin: '0 0 4px', fontSize: 17, fontWeight: 700, color: '#1a73e8' },
+  offerLabel: { fontSize: 12, fontWeight: 400, color: '#aaa' },
   cardMeta: { margin: '0 0 12px', fontSize: 13, color: '#888' },
   cardDate: { margin: 0, fontSize: 11, color: '#bbb' },
   btnPrimary: { width: '100%', marginTop: 4, padding: '10px 0', borderRadius: 8, border: 'none', background: '#1a73e8', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer' },

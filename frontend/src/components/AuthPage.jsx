@@ -26,10 +26,8 @@ export default function AuthPage({ onAuth }) {
     try {
       const endpoint = mode === 'signup' ? `/signup/${role}` : `/login/${role}`
       const body = mode === 'signup'
-        ? { name: form.name, email: form.email, phone: form.phone, ...(role === 'seller' && { password: form.password }) }
-        : role === 'seller'
-          ? { email: form.email, password: form.password }
-          : { email: form.email }
+        ? { name: form.name, email: form.email, phone: form.phone, password: form.password }
+        : { email: form.email, password: form.password }
 
       const res = await fetch(`${API}${endpoint}`, {
         method: 'POST',
@@ -57,8 +55,7 @@ export default function AuthPage({ onAuth }) {
       <div style={s.card}>
 
         <div style={s.logoRow}>
-          <span style={s.logo}>Banna</span>
-          <span style={s.logoSub}>Marketplace</span>
+          <span style={s.logo}>Marketplace</span>
         </div>
 
         <div style={s.toggle}>
@@ -98,12 +95,8 @@ export default function AuthPage({ onAuth }) {
             </>
           )}
 
-          {role === 'seller' && (
-            <>
-              <label style={s.label}>Password</label>
-              <input style={s.input} name="password" type="password" placeholder="Min 8 characters" value={form.password} onChange={handleInput} minLength={8} required />
-            </>
-          )}
+          <label style={s.label}>Password</label>
+          <input style={s.input} name="password" type="password" placeholder="Min 8 characters" value={form.password} onChange={handleInput} minLength={8} required />
 
           {error && <div style={s.errorBox}>{error}</div>}
 
@@ -112,9 +105,6 @@ export default function AuthPage({ onAuth }) {
           </button>
         </form>
 
-        {role === 'buyer' && mode === 'login' && (
-          <p style={s.hint}>No password needed — we'll find your account by email.</p>
-        )}
       </div>
     </div>
   )

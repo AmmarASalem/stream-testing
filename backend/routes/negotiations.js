@@ -75,9 +75,25 @@ router.get('/requests', userAuth, async (req, res) => {
     query = query.eq('seller_id', req.userId)
   }
 
-  const { data, error } = await query
+  const { data: requests, error } = await query
   if (error) return res.status(500).json({ message: error.message })
-  res.json(data)
+
+  if (requests.length === 0) return res.json([])
+
+  const requestIds = requests.map(r => r.id)
+  const { data: negotiations } = await supabase
+    .from('negotiation')
+    .select('id, request_id, amount, outcome, offered_by_role, created_at')
+    .in('request_id', requestIds)
+    .order('created_at', { ascending: true })
+
+  const negsByRequest = {}
+  for (const n of negotiations || []) {
+    if (!negsByRequest[n.request_id]) negsByRequest[n.request_id] = []
+    negsByRequest[n.request_id].push(n)
+  }
+
+  res.json(requests.map(r => ({ ...r, negotiation: negsByRequest[r.id] || [] })))
 })
 
 // GET /api/negotiations/requests/:requestId — request detail + offer history
@@ -148,6 +164,26 @@ router.patch('/offer/:id/accept', userAuth, async (req, res) => {
   if (!offer) return res.status(404).json({ message: 'Offer not found.' })
   if (offer.outcome !== 'pending') return res.status(400).json({ message: 'This offer is no longer active.' })
   if (offer.offered_by_role === req.userRole) return res.status(400).json({ message: "You can't accept your own offer." })
+
+  // Block if the listing already has an accepted deal from a different request
+  const { data: sibling } = await supabase
+    .from('request')
+    .select('id')
+    .eq('listing_id', offer.request.listing_id)
+    .neq('id', offer.request.id)
+
+  if (sibling?.length > 0) {
+    const { data: existingDeal } = await supabase
+      .from('negotiation')
+      .select('id')
+      .in('request_id', sibling.map(r => r.id))
+      .eq('outcome', 'accepted')
+      .maybeSingle()
+
+    if (existingDeal) {
+      return res.status(409).json({ message: 'This listing already has an accepted deal from another buyer.' })
+    }
+  }
 
   const { data: updated } = await supabase
     .from('negotiation')
@@ -241,10 +277,30 @@ router.patch('/offer/:id/pay', userAuth, async (req, res) => {
     .select()
     .single()
 
+  await supabase.from('request').update({ status: 'awaiting_payment' }).eq('id', offer.request.id)
+
+  res.json({ offer: updated, payment_url: streamUrl })
+})
+
+// PATCH /api/negotiations/offer/:id/confirm-payment — buyer confirms payment was completed
+router.patch('/offer/:id/confirm-payment', userAuth, async (req, res) => {
+  if (req.userRole !== 'buyer') return res.status(403).json({ message: 'Only the buyer can confirm payment.' })
+
+  const { data: offer } = await supabase
+    .from('negotiation')
+    .select('*, request(id, listing_id, status)')
+    .eq('id', req.params.id)
+    .single()
+
+  if (!offer) return res.status(404).json({ message: 'Offer not found.' })
+  if (offer.request.status !== 'awaiting_payment') {
+    return res.status(400).json({ message: 'Payment has not been initiated or is already confirmed.' })
+  }
+
   await supabase.from('request').update({ status: 'paid' }).eq('id', offer.request.id)
   await supabase.from('listing').update({ status: 'sold' }).eq('id', offer.request.listing_id)
 
-  res.json({ offer: updated, payment_url: streamUrl })
+  res.json({ success: true })
 })
 
 // PATCH /api/negotiations/offer/:id/reject

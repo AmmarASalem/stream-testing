@@ -26,7 +26,7 @@ export default function App() {
   return (
     <div>
       <div style={nav.bar}>
-        <span style={nav.logo} onClick={() => setView({ name: 'dashboard' })}>Banna</span>
+        <span style={nav.logo} onClick={() => setView({ name: 'dashboard' })}>Marketplace</span>
         <div style={nav.right}>
           <span style={nav.userName}>{user.name}</span>
           <span style={nav.rolePill}>{user.role}</span>

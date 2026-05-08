@@ -14,6 +14,7 @@ export default function NegotiationView({ request: initialRequest, user, onBack 
   const [error, setError] = useState(null)
 
   const isBuyer = user.role === 'buyer'
+  const listingDealTaken = initialRequest.listingDealTaken || false
 
   async function load() {
     try {
@@ -61,6 +62,15 @@ export default function NegotiationView({ request: initialRequest, user, onBack 
         body: { payment_mode: paymentMode }
       })
       if (result.payment_url) window.open(result.payment_url, '_blank')
+      await load()
+    } catch (err) { setError(err.message) }
+    finally { setActionLoading(false) }
+  }
+
+  async function confirmPayment() {
+    setActionLoading(true); setError(null)
+    try {
+      await api(`/api/negotiations/offer/${agreedOffer.id}/confirm-payment`, { method: 'PATCH', body: {} })
       await load()
     } catch (err) { setError(err.message) }
     finally { setActionLoading(false) }
@@ -122,6 +132,8 @@ export default function NegotiationView({ request: initialRequest, user, onBack 
           ))}
         </div>
 
+        {(!listingDealTaken || isBuyer) && <>
+
         {/* Offer accepted — buyer picks payment method */}
         {agreedOffer?.outcome === 'accepted' && agreedOffer?.payment_mode === 'pending_buyer_choice' && isBuyer && (
           <div style={s.acceptedBox}>
@@ -151,18 +163,43 @@ export default function NegotiationView({ request: initialRequest, user, onBack 
           </div>
         )}
 
-        {/* Payment link ready */}
-        {agreedOffer?.outcome === 'accepted' && agreedOffer?.payment_mode !== 'pending_buyer_choice' && (
+        {/* Payment link ready — buyer sees link + confirm button */}
+        {agreedOffer?.outcome === 'accepted' && agreedOffer?.payment_mode !== 'pending_buyer_choice' && isBuyer && (
           <div style={s.acceptedBox}>
             <p style={s.acceptedText}>
               Deal at <strong>{Number(agreedOffer.amount).toLocaleString()} SAR</strong>
               {' '}· {agreedOffer.payment_mode === 'installment' ? 'Installments' : 'One-time'}
             </p>
-            {agreedOffer.stream_payment_url && (
-              <a href={agreedOffer.stream_payment_url} target="_blank" rel="noreferrer" style={{ ...s.payBtn, textDecoration: 'none' }}>
-                Pay via Stream →
-              </a>
+            {request?.status === 'awaiting_payment' && (
+              <>
+                {agreedOffer.stream_payment_url && (
+                  <a href={agreedOffer.stream_payment_url} target="_blank" rel="noreferrer"
+                    style={{ ...s.payBtn, textDecoration: 'none', display: 'inline-block', marginBottom: 12 }}>
+                    Pay via Stream →
+                  </a>
+                )}
+                <p style={{ fontSize: 13, color: '#555', margin: '0 0 10px' }}>
+                  After completing payment on Stream, confirm it here:
+                </p>
+                <button style={{ ...s.payBtn, background: '#1a73e8' }} onClick={confirmPayment} disabled={actionLoading}>
+                  {actionLoading ? 'Confirming...' : 'Confirm Payment'}
+                </button>
+              </>
             )}
+            {request?.status === 'paid' && (
+              <p style={{ margin: 0, fontWeight: 700, color: '#2e7d32' }}>Payment confirmed.</p>
+            )}
+          </div>
+        )}
+
+        {/* Payment initiated — seller sees waiting/confirmed message only, never the link */}
+        {agreedOffer?.outcome === 'accepted' && agreedOffer?.payment_mode !== 'pending_buyer_choice' && !isBuyer && (
+          <div style={s.acceptedBox}>
+            <p style={s.acceptedText}>
+              Deal at <strong>{Number(agreedOffer.amount).toLocaleString()} SAR</strong>
+              {' '}· {agreedOffer.payment_mode === 'installment' ? 'Installments' : 'One-time'}.
+              {' '}{request?.status === 'awaiting_payment' ? 'Waiting for the buyer to complete payment.' : 'Payment confirmed.'}
+            </p>
           </div>
         )}
 
@@ -241,13 +278,15 @@ export default function NegotiationView({ request: initialRequest, user, onBack 
             </button>
           </div>
         )}
+
+        </>}
       </div>
     </div>
   )
 }
 
 function statusBg(status) {
-  return { pending: '#fff3e0', active: '#e3f2fd', paid: '#e8f5e9', accepted: '#e8f5e9', rejected: '#fce8e6', countered: '#f3e5f5', cancelled: '#f5f5f5' }[status] || '#f5f5f5'
+  return { pending: '#fff3e0', active: '#e3f2fd', awaiting_payment: '#fff8e1', paid: '#e8f5e9', accepted: '#e8f5e9', rejected: '#fce8e6', countered: '#f3e5f5', cancelled: '#f5f5f5' }[status] || '#f5f5f5'
 }
 
 const s = {
@@ -261,6 +300,7 @@ const s = {
   listedLabel: { fontSize: 12, fontWeight: 400, color: '#aaa' },
   parties: { display: 'flex', gap: 16, fontSize: 13, color: '#555', alignItems: 'center', flexWrap: 'wrap' },
   statusPill: { fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10, color: '#333' },
+  warningBox: { background: '#fff3e0', border: '1px solid #ffe082', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#e65100', fontWeight: 600, marginBottom: 12, maxWidth: 660 },
   errorBox: { background: '#fce8e6', border: '1px solid #f5c6c2', borderRadius: 8, padding: '10px 12px', fontSize: 13, color: '#c62828', marginBottom: 12, maxWidth: 660 },
   sectionTitle: { margin: '0 0 14px', fontSize: 15, fontWeight: 700 },
   empty: { color: '#999', fontSize: 14, textAlign: 'center', padding: '20px 0' },
