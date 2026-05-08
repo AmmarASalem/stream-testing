@@ -21,7 +21,7 @@ export default function Dashboard({ user, onOpenNegotiation, onCreateListing }) 
       .finally(() => setLoading(false))
   }, [isBuyer])
 
-  const statusColor = { pending: '#f57c00', active: '#1a73e8', awaiting_payment: '#e65100', paid: '#34a853', cancelled: '#999', deal: '#2e7d32' }
+  const statusColor = { pending: '#f57c00', active: '#1a73e8', accepted: '#2e7d32', awaiting_payment: '#e65100', paid: '#34a853', cancelled: '#9e9e9e' }
 
   async function sendRequest(listingId, amount) {
     try {
@@ -134,50 +134,42 @@ export default function Dashboard({ user, onOpenNegotiation, onCreateListing }) 
             myRequests.length === 0
               ? <p style={s.empty}>No requests yet.</p>
               : <div style={s.grid}>
-                  {(() => {
-                    const dealtListingIds = new Set(
-                      myRequests
-                        .filter(r => (r.negotiation || []).some(o => o.outcome === 'accepted'))
-                        .map(r => r.listing_id)
-                    )
-                    return myRequests.map(r => {
-                      const offers = r.negotiation || []
-                      const agreed = offers.find(o => o.outcome === 'accepted')
-                      const latest = [...offers].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0]
-                      const activeOffer = agreed || (latest?.outcome === 'pending' ? latest : null)
-                      const listingDealTaken = !agreed && dealtListingIds.has(r.listing_id)
-                      const displayStatus = agreed ? 'deal' : r.status
-                      return (
-                        <div key={r.id}
-                          style={{ ...s.card, ...(listingDealTaken ? s.cardBlocked : {}) }}
-                          onClick={() => onOpenNegotiation({ ...r, listingDealTaken })}
-                          role="button">
-                          <div style={s.cardHeader}>
-                            <h3 style={s.cardTitle}>{r.listing?.title || 'Listing'}</h3>
-                            <span style={{ ...s.pill, background: displayStatus === 'deal' ? '#e8f5e9' : '#fff3e0', color: statusColor[displayStatus] || '#999' }}>
-                              {displayStatus}
-                            </span>
-                          </div>
-                          {listingDealTaken && (
-                            <p style={s.takenNote}>Listing already has an accepted deal</p>
-                          )}
-                          {activeOffer ? (
-                            <p style={s.cardPrice}>
-                              {Number(activeOffer.amount).toLocaleString()} SAR
-                              <span style={s.offerLabel}>{agreed ? ' agreed' : ' offer'}</span>
-                            </p>
-                          ) : (
-                            <p style={s.cardPrice}>
-                              {Number(r.listing?.price || 0).toLocaleString()} SAR
-                              <span style={s.offerLabel}> listed</span>
-                            </p>
-                          )}
-                          <p style={s.cardMeta}>{isBuyer ? `Seller: ${r.seller?.appuser?.name}` : `Buyer: ${r.buyer?.appuser?.name}`}</p>
-                          <p style={s.cardDate}>{new Date(r.created_at).toLocaleDateString()}</p>
+                  {myRequests.map(r => {
+                    const offers = r.negotiation || []
+                    const agreedOffer = offers.find(o => o.outcome === 'accepted')
+                    const latest = [...offers].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0]
+                    const activeOffer = agreedOffer || (latest?.outcome === 'pending' ? latest : null)
+                    const isCancelled = r.status === 'cancelled'
+                    const statusBgColor = { pending: '#fff3e0', active: '#e3f2fd', accepted: '#e8f5e9', awaiting_payment: '#fff8e1', paid: '#e8f5e9', cancelled: '#f5f5f5' }[r.status] || '#f5f5f5'
+                    const statusLabel = { pending: 'Pending', active: 'Active', accepted: 'Deal', awaiting_payment: 'Awaiting Payment', paid: 'Paid', cancelled: 'Cancelled' }[r.status] || r.status
+                    return (
+                      <div key={r.id}
+                        style={{ ...s.card, ...(isCancelled ? s.cardBlocked : {}) }}
+                        onClick={() => onOpenNegotiation(r)}
+                        role="button">
+                        <div style={s.cardHeader}>
+                          <h3 style={s.cardTitle}>{r.listing?.title || 'Listing'}</h3>
+                          <span style={{ ...s.pill, background: statusBgColor, color: statusColor[r.status] || '#999' }}>
+                            {statusLabel}
+                          </span>
                         </div>
-                      )
-                    })
-                  })()}
+                        {isCancelled && <p style={s.takenNote}>Cancelled — another buyer closed the deal</p>}
+                        {activeOffer ? (
+                          <p style={s.cardPrice}>
+                            {Number(activeOffer.amount).toLocaleString()} SAR
+                            <span style={s.offerLabel}>{agreedOffer ? ' agreed' : ' offer'}</span>
+                          </p>
+                        ) : (
+                          <p style={s.cardPrice}>
+                            {Number(r.listing?.price || 0).toLocaleString()} SAR
+                            <span style={s.offerLabel}> listed</span>
+                          </p>
+                        )}
+                        <p style={s.cardMeta}>{isBuyer ? `Seller: ${r.seller?.appuser?.name}` : `Buyer: ${r.buyer?.appuser?.name}`}</p>
+                        <p style={s.cardDate}>{new Date(r.created_at).toLocaleDateString()}</p>
+                      </div>
+                    )
+                  })}
                 </div>
           )}
         </>
@@ -225,7 +217,7 @@ const s = {
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 },
   card: { background: '#fff', borderRadius: 12, padding: 20, boxShadow: '0 2px 12px rgba(0,0,0,0.06)', cursor: 'pointer' },
   cardBlocked: { opacity: 0.6, background: '#fafafa' },
-  takenNote: { margin: '0 0 8px', fontSize: 12, color: '#e65100', fontWeight: 600 },
+  takenNote: { margin: '0 0 8px', fontSize: 12, color: '#9e9e9e', fontWeight: 600 },
   cardHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 },
   cardTitle: { margin: 0, fontSize: 16, fontWeight: 700, color: '#1a1a1a' },
   pill: { fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10, flexShrink: 0 },

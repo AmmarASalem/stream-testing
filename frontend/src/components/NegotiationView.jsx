@@ -14,7 +14,6 @@ export default function NegotiationView({ request: initialRequest, user, onBack 
   const [error, setError] = useState(null)
 
   const isBuyer = user.role === 'buyer'
-  const listingDealTaken = initialRequest.listingDealTaken || false
 
   async function load() {
     try {
@@ -33,6 +32,18 @@ export default function NegotiationView({ request: initialRequest, user, onBack 
   const agreedOffer = data?.offers?.find(o => o.outcome === 'accepted')
   const request = data?.request
 
+  useEffect(() => {
+    if (!isBuyer || request?.status !== 'awaiting_payment' || !agreedOffer?.id) return
+    const offerId = agreedOffer.id
+    const interval = setInterval(async () => {
+      try {
+        const result = await api(`/api/negotiations/offer/${offerId}/check-payment`)
+        if (result.paid) { clearInterval(interval); load() }
+      } catch {}
+    }, 5000)
+    return () => clearInterval(interval)
+  }, [isBuyer, request?.status, agreedOffer?.id])
+
   async function sendOffer(amount, extra = {}) {
     setActionLoading(true); setError(null)
     try {
@@ -48,9 +59,19 @@ export default function NegotiationView({ request: initialRequest, user, onBack 
   async function acceptOffer() {
     setActionLoading(true); setError(null)
     try {
-      await api(`/api/negotiations/offer/${activeOffer.id}/accept`, { method: 'PATCH', body: {} })
+      const accepted = await api(`/api/negotiations/offer/${activeOffer.id}/accept`, { method: 'PATCH', body: {} })
+      if (isBuyer) {
+        const result = await api(`/api/negotiations/offer/${accepted.id}/pay`, {
+          method: 'PATCH',
+          body: { payment_mode: paymentMode }
+        })
+        if (result.payment_url) window.open(result.payment_url, '_blank')
+      }
       await load()
-    } catch (err) { setError(err.message) }
+    } catch (err) {
+      setError(err.message)
+      await load()
+    }
     finally { setActionLoading(false) }
   }
 
@@ -67,15 +88,6 @@ export default function NegotiationView({ request: initialRequest, user, onBack 
     finally { setActionLoading(false) }
   }
 
-  async function confirmPayment() {
-    setActionLoading(true); setError(null)
-    try {
-      await api(`/api/negotiations/offer/${agreedOffer.id}/confirm-payment`, { method: 'PATCH', body: {} })
-      await load()
-    } catch (err) { setError(err.message) }
-    finally { setActionLoading(false) }
-  }
-
   async function rejectOffer() {
     setActionLoading(true); setError(null)
     try {
@@ -86,6 +98,20 @@ export default function NegotiationView({ request: initialRequest, user, onBack 
   }
 
   if (loading) return <div style={s.page}><p style={s.empty}>Loading...</p></div>
+
+  if (request?.status === 'cancelled') {
+    return (
+      <div style={s.page}>
+        <button style={s.back} onClick={onBack}>← Back</button>
+        <div style={s.section}>
+          <h2 style={s.listingTitle}>{request.listing?.title}</h2>
+          <p style={{ color: '#9e9e9e', fontSize: 14, marginTop: 8 }}>
+            This request was cancelled. Another buyer completed a deal for this listing.
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   const listing = request?.listing
   const buyer = request?.buyer?.appuser
@@ -132,7 +158,7 @@ export default function NegotiationView({ request: initialRequest, user, onBack 
           ))}
         </div>
 
-        {(!listingDealTaken || isBuyer) && <>
+        <>
 
         {/* Offer accepted — buyer picks payment method */}
         {agreedOffer?.outcome === 'accepted' && agreedOffer?.payment_mode === 'pending_buyer_choice' && isBuyer && (
@@ -174,16 +200,13 @@ export default function NegotiationView({ request: initialRequest, user, onBack 
               <>
                 {agreedOffer.stream_payment_url && (
                   <a href={agreedOffer.stream_payment_url} target="_blank" rel="noreferrer"
-                    style={{ ...s.payBtn, textDecoration: 'none', display: 'inline-block', marginBottom: 12 }}>
+                    style={{ ...s.payBtn, textDecoration: 'none', display: 'inline-block', marginBottom: 16 }}>
                     Pay via Stream →
                   </a>
                 )}
-                <p style={{ fontSize: 13, color: '#555', margin: '0 0 10px' }}>
-                  After completing payment on Stream, confirm it here:
+                <p style={{ fontSize: 13, color: '#888', margin: 0 }}>
+                  Waiting for payment confirmation…
                 </p>
-                <button style={{ ...s.payBtn, background: '#1a73e8' }} onClick={confirmPayment} disabled={actionLoading}>
-                  {actionLoading ? 'Confirming...' : 'Confirm Payment'}
-                </button>
               </>
             )}
             {request?.status === 'paid' && (
@@ -279,7 +302,7 @@ export default function NegotiationView({ request: initialRequest, user, onBack 
           </div>
         )}
 
-        </>}
+        </>
       </div>
     </div>
   )

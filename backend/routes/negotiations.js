@@ -78,22 +78,25 @@ router.get('/requests', userAuth, async (req, res) => {
   const { data: requests, error } = await query
   if (error) return res.status(500).json({ message: error.message })
 
-  if (requests.length === 0) return res.json([])
+  if (!requests || requests.length === 0) return res.json([])
 
-  const requestIds = requests.map(r => r.id)
-  const { data: negotiations } = await supabase
+  const requestIds = requests.map(r => Number(r.id))
+  const { data: negotiations, error: negError } = await supabase
     .from('negotiation')
     .select('id, request_id, amount, outcome, offered_by_role, created_at')
     .in('request_id', requestIds)
     .order('created_at', { ascending: true })
 
+  console.log('[requests list] ids:', requestIds, '| neg count:', negotiations?.length, '| neg error:', negError?.message)
+
   const negsByRequest = {}
   for (const n of negotiations || []) {
-    if (!negsByRequest[n.request_id]) negsByRequest[n.request_id] = []
-    negsByRequest[n.request_id].push(n)
+    const key = Number(n.request_id)
+    if (!negsByRequest[key]) negsByRequest[key] = []
+    negsByRequest[key].push(n)
   }
 
-  res.json(requests.map(r => ({ ...r, negotiation: negsByRequest[r.id] || [] })))
+  res.json(requests.map(r => ({ ...r, negotiation: negsByRequest[Number(r.id)] || [] })))
 })
 
 // GET /api/negotiations/requests/:requestId — request detail + offer history
@@ -157,7 +160,7 @@ router.post('/offer', userAuth, async (req, res) => {
 router.patch('/offer/:id/accept', userAuth, async (req, res) => {
   const { data: offer } = await supabase
     .from('negotiation')
-    .select('*, request(id, listing_id)')
+    .select('*, request(id, listing_id, status)')
     .eq('id', req.params.id)
     .single()
 
@@ -165,34 +168,30 @@ router.patch('/offer/:id/accept', userAuth, async (req, res) => {
   if (offer.outcome !== 'pending') return res.status(400).json({ message: 'This offer is no longer active.' })
   if (offer.offered_by_role === req.userRole) return res.status(400).json({ message: "You can't accept your own offer." })
 
-  // Block if the listing already has an accepted deal from a different request
-  const { data: sibling } = await supabase
-    .from('request')
-    .select('id')
-    .eq('listing_id', offer.request.listing_id)
-    .neq('id', offer.request.id)
-
-  if (sibling?.length > 0) {
-    const { data: existingDeal } = await supabase
-      .from('negotiation')
-      .select('id')
-      .in('request_id', sibling.map(r => r.id))
-      .eq('outcome', 'accepted')
-      .maybeSingle()
-
-    if (existingDeal) {
-      return res.status(409).json({ message: 'This listing already has an accepted deal from another buyer.' })
-    }
-  }
-
-  const { data: updated } = await supabase
+  const { data: updated, error: updateErr } = await supabase
     .from('negotiation')
     .update({ outcome: 'accepted' })
     .eq('id', req.params.id)
     .select()
     .single()
 
-  await supabase.from('request').update({ status: 'active' }).eq('id', offer.request.id)
+  if (updateErr) return res.status(500).json({ message: updateErr.message })
+
+  await supabase.from('request').update({ status: 'accepted' }).eq('id', offer.request.id)
+
+  const { data: siblings } = await supabase
+    .from('request')
+    .select('id')
+    .eq('listing_id', offer.request.listing_id)
+    .neq('id', offer.request.id)
+    .in('status', ['pending', 'active'])
+
+  if (siblings?.length > 0) {
+    const siblingIds = siblings.map(r => r.id)
+    await supabase.from('negotiation').update({ outcome: 'rejected' })
+      .in('request_id', siblingIds).eq('outcome', 'pending')
+    await supabase.from('request').update({ status: 'cancelled' }).in('id', siblingIds)
+  }
 
   res.json(updated)
 })
@@ -246,6 +245,7 @@ router.patch('/offer/:id/pay', userAuth, async (req, res) => {
   const productId = productRes.data.id
 
   let streamUrl = null
+  let streamLinkId = null
   try {
     const linkRes = await axios.post(
       'https://stream-app-service.streampay.sa/api/v2/payment_links',
@@ -264,6 +264,7 @@ router.patch('/offer/:id/pay', userAuth, async (req, res) => {
       { headers: streamHeaders }
     )
     streamUrl = linkRes.data.url
+    streamLinkId = linkRes.data.id
   } catch (err) {
     const detail = err.response?.data || err.message
     console.error('Stream create payment link error:', JSON.stringify(detail, null, 2))
@@ -272,7 +273,7 @@ router.patch('/offer/:id/pay', userAuth, async (req, res) => {
 
   const { data: updated } = await supabase
     .from('negotiation')
-    .update({ payment_mode, stream_payment_url: streamUrl })
+    .update({ payment_mode, stream_payment_url: streamUrl, stream_payment_link_id: streamLinkId })
     .eq('id', req.params.id)
     .select()
     .single()
@@ -280,6 +281,42 @@ router.patch('/offer/:id/pay', userAuth, async (req, res) => {
   await supabase.from('request').update({ status: 'awaiting_payment' }).eq('id', offer.request.id)
 
   res.json({ offer: updated, payment_url: streamUrl })
+})
+
+// GET /api/negotiations/offer/:id/check-payment — poll Stream to detect if payment succeeded
+router.get('/offer/:id/check-payment', userAuth, async (req, res) => {
+  const { data: offer } = await supabase
+    .from('negotiation')
+    .select('*, request(id, listing_id, status)')
+    .eq('id', req.params.id)
+    .single()
+
+  if (!offer) return res.status(404).json({ message: 'Offer not found.' })
+  if (offer.request.status === 'paid') return res.json({ paid: true })
+  if (!offer.stream_payment_link_id) return res.json({ paid: false })
+
+  let paid = false
+  try {
+    const invoicesRes = await axios.get(
+      'https://stream-app-service.streampay.sa/api/v2/invoices',
+      { params: { payment_link_id: offer.stream_payment_link_id, include_payments: true }, headers: streamHeaders }
+    )
+    const invoices = invoicesRes.data.data || invoicesRes.data || []
+    paid = Array.isArray(invoices) && invoices.some(inv =>
+      inv.status === 'COMPLETED' ||
+      (Array.isArray(inv.payments) && inv.payments.some(p => p.status === 'SUCCEEDED'))
+    )
+  } catch (err) {
+    console.error('Stream check payment error:', err.response?.data || err.message)
+    return res.json({ paid: false })
+  }
+
+  if (paid) {
+    await supabase.from('request').update({ status: 'paid' }).eq('id', offer.request.id)
+    await supabase.from('listing').update({ status: 'sold' }).eq('id', offer.request.listing_id)
+  }
+
+  res.json({ paid })
 })
 
 // PATCH /api/negotiations/offer/:id/confirm-payment — buyer confirms payment was completed
